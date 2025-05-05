@@ -45,12 +45,7 @@ from tqdm.auto import tqdm
 from transformers import AutoTokenizer, Gemma2Model
 
 import diffusers
-from diffusers import (
-    AutoencoderKL,
-    FlowMatchEulerDiscreteScheduler,
-    Lumina2Pipeline,
-    Lumina2Transformer2DModel,
-)
+from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler, Lumina2Pipeline, Lumina2Transformer2DModel
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import (
     cast_training_params,
@@ -58,11 +53,7 @@ from diffusers.training_utils import (
     compute_loss_weighting_for_sd3,
     free_memory,
 )
-from diffusers.utils import (
-    check_min_version,
-    convert_unet_state_dict_to_peft,
-    is_wandb_available,
-)
+from diffusers.utils import check_min_version, convert_unet_state_dict_to_peft, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_torch_npu_available
 from diffusers.utils.torch_utils import is_compiled_module
@@ -564,6 +555,7 @@ def parse_args(input_args=None):
             " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
         ),
     )
+
     parser.add_argument(
         "--cache_latents",
         action="store_true",
@@ -600,12 +592,21 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--image_interpolation_mode",
+        type=str,
+        default="lanczos",
+        choices=[
+            f.lower() for f in dir(transforms.InterpolationMode) if not f.startswith("__") and not f.endswith("__")
+        ],
+        help="The image interpolation method to use for resizing images.",
+    )
+    parser.add_argument(
         "--offload",
         action="store_true",
         help="Whether to offload the VAE and the text encoder to CPU when they are not used.",
     )
-    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
 
+    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
     if input_args is not None:
         args = parser.parse_args(input_args)
     else:
@@ -724,7 +725,11 @@ class DreamBoothDataset(Dataset):
             self.instance_images.extend(itertools.repeat(img, repeats))
 
         self.pixel_values = []
-        train_resize = transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR)
+        interpolation = getattr(transforms.InterpolationMode, args.image_interpolation_mode.upper(), None)
+        if interpolation is None:
+            raise ValueError(f"Unsupported interpolation mode: {args.image_interpolation_mode}")
+
+        train_resize = transforms.Resize(size, interpolation=interpolation)
         train_crop = transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size)
         train_flip = transforms.RandomHorizontalFlip(p=1.0)
         train_transforms = transforms.Compose(
@@ -768,7 +773,7 @@ class DreamBoothDataset(Dataset):
 
         self.image_transforms = transforms.Compose(
             [
-                transforms.Resize(size, interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.Resize(size, interpolation=interpolation),
                 transforms.CenterCrop(size) if center_crop else transforms.RandomCrop(size),
                 transforms.ToTensor(),
                 transforms.Normalize([0.5], [0.5]),
